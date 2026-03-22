@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">Bringalive AI assistant reads your screen and performs actions on your behalf. Enable to allow the assistant to see and interact with apps.</string>
+</resources>

@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.onelenyk.bringalive.agent.AgentEvent
 import dev.onelenyk.bringalive.agent.BringaliveAgent
+import dev.onelenyk.bringalive.conversation.ConversationManager
+import dev.onelenyk.bringalive.conversation.ConversationMeta
 import dev.onelenyk.bringalive.model.ChatMessage
 import dev.onelenyk.bringalive.model.MessageRole
 import dev.onelenyk.bringalive.model.ToolStatus
@@ -23,11 +25,14 @@ data class ChatUiState(
     val streamingText: String = "",
     val activeTools: List<ToolStatus> = emptyList(),
     val error: String? = null,
+    val conversations: List<ConversationMeta> = emptyList(),
+    val activeConversationId: String? = null,
 )
 
 @OptIn(ExperimentalUuidApi::class)
 class ChatViewModel(
     private val agent: BringaliveAgent,
+    private val conversationManager: ConversationManager,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -37,6 +42,8 @@ class ChatViewModel(
 
     init {
         observeAgentEvents()
+        observeConversations()
+        loadActiveConversation()
     }
 
     fun onInputChanged(text: String) {
@@ -64,13 +71,77 @@ class ChatViewModel(
             )
         }
 
+        // Auto-title: use first message as title
+        val activeId = conversationManager.activeConversationId.value
+        if (activeId != null) {
+            val meta = _state.value.conversations.find { it.id == activeId }
+            if (meta != null && meta.messageCount == 0) {
+                conversationManager.updateTitle(activeId, text.take(40))
+            }
+        }
+
         currentJob = viewModelScope.launch {
             agent.run(text)
         }
     }
 
+    fun onNewConversation() {
+        agent.resetAgent()
+        conversationManager.newConversation()
+        loadActiveConversation()
+    }
+
+    fun onSwitchConversation(conversationId: String) {
+        agent.resetAgent()
+        conversationManager.switchTo(conversationId)
+        loadActiveConversation()
+    }
+
+    fun onDeleteConversation(conversationId: String) {
+        conversationManager.deleteConversation(conversationId)
+        loadActiveConversation()
+    }
+
     fun onDismissError() {
         _state.update { it.copy(error = null) }
+    }
+
+    private fun loadActiveConversation() {
+        val messages = conversationManager.activeMessages().map { msg ->
+            ChatMessage(
+                id = Uuid.random().toString(),
+                role = when (msg.role) {
+                    "user" -> MessageRole.USER
+                    "assistant" -> MessageRole.ASSISTANT
+                    else -> MessageRole.TOOL
+                },
+                content = msg.content,
+                toolName = msg.toolName,
+            )
+        }
+        _state.update {
+            it.copy(
+                messages = messages,
+                streamingText = "",
+                activeTools = emptyList(),
+                isGenerating = false,
+                error = null,
+                activeConversationId = conversationManager.activeConversationId.value,
+            )
+        }
+    }
+
+    private fun observeConversations() {
+        viewModelScope.launch {
+            conversationManager.conversations.collect { convos ->
+                _state.update { it.copy(conversations = convos) }
+            }
+        }
+        viewModelScope.launch {
+            conversationManager.activeConversationId.collect { id ->
+                _state.update { it.copy(activeConversationId = id) }
+            }
+        }
     }
 
     private fun observeAgentEvents() {
@@ -126,7 +197,6 @@ class ChatViewModel(
                     is AgentEvent.Completed -> {
                         val responseText = _state.value.streamingText.ifBlank { event.fullText }
 
-                        // Add tool messages if any tools were executed
                         val toolMessages = _state.value.activeTools.map { tool ->
                             ChatMessage(
                                 id = Uuid.random().toString(),

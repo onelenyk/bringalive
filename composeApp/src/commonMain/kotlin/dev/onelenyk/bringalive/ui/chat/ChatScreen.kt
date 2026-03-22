@@ -23,21 +23,29 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,7 +56,9 @@ import cafe.adriel.voyager.navigator.currentOrThrow
 import dev.onelenyk.bringalive.model.ChatMessage
 import dev.onelenyk.bringalive.model.MessageRole
 import dev.onelenyk.bringalive.presentation.ChatViewModel
+import dev.onelenyk.bringalive.ui.logs.LogsScreen
 import dev.onelenyk.bringalive.ui.settings.SettingsScreen
+import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
 
 class ChatScreen : Screen {
@@ -60,6 +70,8 @@ class ChatScreen : Screen {
         val viewModel: ChatViewModel = koinViewModel()
         val state by viewModel.state.collectAsState()
         val listState = rememberLazyListState()
+        val drawerState = rememberDrawerState(DrawerValue.Closed)
+        val scope = rememberCoroutineScope()
 
         // Scroll to bottom on new messages or streaming
         val scrollTarget = state.messages.size + if (state.streamingText.isNotEmpty()) 1 else 0
@@ -69,104 +81,144 @@ class ChatScreen : Screen {
             }
         }
 
-        Scaffold(
-            topBar = {
-                CenterAlignedTopAppBar(
-                    title = { Text("bringalive") },
-                    colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                    ),
-                    actions = {
-                        IconButton(onClick = { navigator.push(SettingsScreen()) }) {
-                            Icon(Icons.Default.Settings, contentDescription = "Settings")
-                        }
-                    },
-                    modifier = Modifier.statusBarsPadding(),
-                )
+        ModalNavigationDrawer(
+            drawerState = drawerState,
+            drawerContent = {
+                ModalDrawerSheet {
+                    ConversationDrawer(
+                        conversations = state.conversations,
+                        activeId = state.activeConversationId,
+                        onSelect = { id ->
+                            viewModel.onSwitchConversation(id)
+                            scope.launch { drawerState.close() }
+                        },
+                        onNew = {
+                            viewModel.onNewConversation()
+                            scope.launch { drawerState.close() }
+                        },
+                        onDelete = { id ->
+                            viewModel.onDeleteConversation(id)
+                        },
+                    )
+                }
             },
-        ) { paddingValues ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .imePadding(),
-            ) {
-                // Messages
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    if (state.messages.isEmpty()) {
-                        item {
-                            EmptyState()
-                        }
-                    }
-                    items(state.messages, key = { it.id }) { message ->
-                        if (message.role == MessageRole.TOOL) {
-                            ToolExecutionCard(
-                                toolName = message.toolName ?: "tool",
-                                result = message.content,
-                            )
-                        } else {
-                            ChatBubble(message)
-                        }
-                    }
-
-                    // Active tool cards
-                    if (state.activeTools.isNotEmpty()) {
-                        items(state.activeTools, key = { it.name }) { tool ->
-                            ToolExecutionCard(
-                                toolName = tool.name,
-                                status = tool.status,
-                                result = tool.result,
-                            )
-                        }
-                    }
-
-                    // Streaming bubble
-                    if (state.streamingText.isNotEmpty()) {
-                        item(key = "streaming") {
-                            ChatBubble(
-                                ChatMessage(
-                                    id = "streaming",
-                                    role = MessageRole.ASSISTANT,
-                                    content = state.streamingText,
-                                    isStreaming = true,
-                                )
-                            )
-                        }
-                    }
-                }
-
-                // Error banner
-                if (state.error != null) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.errorContainer,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                        shape = RoundedCornerShape(8.dp),
-                    ) {
-                        Text(
-                            text = state.error!!,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(12.dp),
-                        )
-                    }
-                }
-
-                // Input bar
-                ChatInputBar(
-                    text = state.inputText,
-                    onTextChanged = viewModel::onInputChanged,
-                    onSend = viewModel::onSendMessage,
-                    isGenerating = state.isGenerating,
+        ) {
+            Scaffold(
+                topBar = {
+                    CenterAlignedTopAppBar(
+                        title = {
+                            // Show active conversation title
+                            val title = state.conversations
+                                .find { it.id == state.activeConversationId }
+                                ?.title ?: "bringalive"
+                            Text(title, maxLines = 1)
+                        },
+                        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                        ),
+                        navigationIcon = {
+                            IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                                Icon(Icons.Default.Menu, contentDescription = "Conversations")
+                            }
+                        },
+                        actions = {
+                            IconButton(onClick = { viewModel.onNewConversation() }) {
+                                Icon(Icons.Default.Add, contentDescription = "New chat")
+                            }
+                            IconButton(onClick = { navigator.push(LogsScreen()) }) {
+                                Icon(Icons.Default.Info, contentDescription = "Logs")
+                            }
+                            IconButton(onClick = { navigator.push(SettingsScreen()) }) {
+                                Icon(Icons.Default.Settings, contentDescription = "Settings")
+                            }
+                        },
+                        modifier = Modifier.statusBarsPadding(),
+                    )
+                },
+            ) { paddingValues ->
+                Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                )
+                        .fillMaxSize()
+                        .padding(paddingValues)
+                        .imePadding(),
+                ) {
+                    // Messages
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (state.messages.isEmpty()) {
+                            item {
+                                EmptyState()
+                            }
+                        }
+                        items(state.messages, key = { it.id }) { message ->
+                            if (message.role == MessageRole.TOOL) {
+                                ToolExecutionCard(
+                                    toolName = message.toolName ?: "tool",
+                                    result = message.content,
+                                )
+                            } else {
+                                ChatBubble(message)
+                            }
+                        }
+
+                        // Active tool cards
+                        if (state.activeTools.isNotEmpty()) {
+                            items(state.activeTools, key = { it.name }) { tool ->
+                                ToolExecutionCard(
+                                    toolName = tool.name,
+                                    status = tool.status,
+                                    result = tool.result,
+                                )
+                            }
+                        }
+
+                        // Streaming bubble
+                        if (state.streamingText.isNotEmpty()) {
+                            item(key = "streaming") {
+                                ChatBubble(
+                                    ChatMessage(
+                                        id = "streaming",
+                                        role = MessageRole.ASSISTANT,
+                                        content = state.streamingText,
+                                        isStreaming = true,
+                                    )
+                                )
+                            }
+                        }
+                    }
+
+                    // Error banner
+                    if (state.error != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text(
+                                text = state.error!!,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(12.dp),
+                            )
+                        }
+                    }
+
+                    // Input bar
+                    ChatInputBar(
+                        text = state.inputText,
+                        onTextChanged = viewModel::onInputChanged,
+                        onSend = viewModel::onSendMessage,
+                        isGenerating = state.isGenerating,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
             }
         }
     }
