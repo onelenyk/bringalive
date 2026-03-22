@@ -24,8 +24,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DrawerValue
@@ -220,7 +222,9 @@ class ChatScreen : Screen {
                         text = state.inputText,
                         onTextChanged = viewModel::onInputChanged,
                         onSend = viewModel::onSendMessage,
+                        onMicToggle = viewModel::onMicToggle,
                         isGenerating = state.isGenerating,
+                        voiceState = state.voiceState,
                         modifier = Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
@@ -363,9 +367,13 @@ private fun ChatInputBar(
     text: String,
     onTextChanged: (String) -> Unit,
     onSend: () -> Unit,
+    onMicToggle: () -> Unit,
     isGenerating: Boolean,
+    voiceState: dev.onelenyk.bringalive.voice.VoiceState,
     modifier: Modifier = Modifier,
 ) {
+    val isVoiceActive = voiceState != dev.onelenyk.bringalive.voice.VoiceState.IDLE
+
     Surface(
         tonalElevation = 2.dp,
         modifier = modifier,
@@ -375,30 +383,68 @@ private fun ChatInputBar(
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = onTextChanged,
-                placeholder = { Text("Message bringalive...") },
-                modifier = Modifier.weight(1f),
-                maxLines = 4,
-                shape = RoundedCornerShape(20.dp),
-            )
+            if (isVoiceActive) {
+                // Voice mode: show state text instead of TextField
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                ) {
+                    Text(
+                        text = when (voiceState) {
+                            dev.onelenyk.bringalive.voice.VoiceState.LISTENING -> "Listening..."
+                            dev.onelenyk.bringalive.voice.VoiceState.RECORDING -> "Recording..."
+                            dev.onelenyk.bringalive.voice.VoiceState.TRANSCRIBING -> "Transcribing..."
+                            dev.onelenyk.bringalive.voice.VoiceState.THINKING -> "Thinking..."
+                            dev.onelenyk.bringalive.voice.VoiceState.SPEAKING -> "Speaking..."
+                            else -> ""
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            } else {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = onTextChanged,
+                    placeholder = { Text("Message bringalive...") },
+                    modifier = Modifier.weight(1f),
+                    maxLines = 4,
+                    shape = RoundedCornerShape(20.dp),
+                )
+            }
 
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(4.dp))
 
-            IconButton(
-                onClick = onSend,
-                enabled = text.isNotBlank() && !isGenerating,
-            ) {
+            // Mic button
+            IconButton(onClick = onMicToggle) {
                 Icon(
-                    Icons.AutoMirrored.Filled.Send,
-                    contentDescription = "Send",
-                    tint = if (text.isNotBlank() && !isGenerating) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                    imageVector = if (isVoiceActive) Icons.Default.Close else Icons.Default.Phone,
+                    contentDescription = if (isVoiceActive) "Stop" else "Voice",
+                    tint = when {
+                        voiceState == dev.onelenyk.bringalive.voice.VoiceState.RECORDING -> MaterialTheme.colorScheme.error
+                        isVoiceActive -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                     },
                 )
+            }
+
+            // Send button (only in text mode with text)
+            if (!isVoiceActive && text.isNotBlank()) {
+                IconButton(
+                    onClick = onSend,
+                    enabled = !isGenerating,
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Send",
+                        tint = if (!isGenerating) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                }
             }
         }
     }

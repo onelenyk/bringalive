@@ -9,6 +9,8 @@ import dev.onelenyk.bringalive.conversation.ConversationMeta
 import dev.onelenyk.bringalive.model.ChatMessage
 import dev.onelenyk.bringalive.model.MessageRole
 import dev.onelenyk.bringalive.model.ToolStatus
+import dev.onelenyk.bringalive.voice.VoiceEngine
+import dev.onelenyk.bringalive.voice.VoiceState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,12 +38,15 @@ data class ChatUiState(
     val error: String? = null,
     val conversations: List<ConversationMeta> = emptyList(),
     val activeConversationId: String? = null,
+    val voiceState: VoiceState = VoiceState.IDLE,
+    val voiceAmplitude: Float = 0f,
 )
 
 @OptIn(ExperimentalUuidApi::class)
 class ChatViewModel(
     private val agent: BringaliveAgent,
     private val conversationManager: ConversationManager,
+    private val voiceEngine: VoiceEngine,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(ChatUiState())
@@ -52,6 +57,7 @@ class ChatViewModel(
     init {
         observeAgentEvents()
         observeConversations()
+        observeVoice()
         loadActiveConversation()
     }
 
@@ -111,6 +117,18 @@ class ChatViewModel(
         loadActiveConversation()
     }
 
+    fun onMicToggle() {
+        when (voiceEngine.state.value) {
+            VoiceState.IDLE -> voiceEngine.startListening()
+            VoiceState.LISTENING, VoiceState.RECORDING -> voiceEngine.stopListening()
+            VoiceState.SPEAKING -> {
+                voiceEngine.stopSpeaking()
+                voiceEngine.startListening() // barge-in
+            }
+            else -> voiceEngine.stopListening()
+        }
+    }
+
     fun onDismissError() {
         _state.update { it.copy(error = null) }
     }
@@ -163,6 +181,10 @@ class ChatViewModel(
                         _state.update {
                             it.copy(streamingText = it.streamingText + event.text)
                         }
+                        // Feed to TTS if in voice mode
+                        if (voiceEngine.state.value != VoiceState.IDLE) {
+                            voiceEngine.onAgentTextDelta(event.text)
+                        }
                     }
 
                     is AgentEvent.ToolCallStarted -> {
@@ -211,6 +233,7 @@ class ChatViewModel(
                     is AgentEvent.StreamEnd -> {}
 
                     is AgentEvent.Completed -> {
+                        voiceEngine.onAgentResponseComplete()
                         val responseText = _state.value.streamingText.ifBlank { event.fullText }
 
                         val toolMessages = _state.value.activeTools.map { tool ->
@@ -252,6 +275,57 @@ class ChatViewModel(
                     }
                 }
             }
+        }
+    }
+
+    private fun observeVoice() {
+        // Voice state → UI
+        viewModelScope.launch {
+            voiceEngine.state.collect { vs ->
+                _state.update { it.copy(voiceState = vs) }
+            }
+        }
+        viewModelScope.launch {
+            voiceEngine.amplitude.collect { amp ->
+                _state.update { it.copy(voiceAmplitude = amp) }
+            }
+        }
+        // Transcribed text → auto-send to agent
+        viewModelScope.launch {
+            voiceEngine.transcribedText.collect { text ->
+                sendFromVoice(text)
+            }
+        }
+        // Voice errors → UI
+        viewModelScope.launch {
+            voiceEngine.error.collect { err ->
+                _state.update { it.copy(error = err) }
+            }
+        }
+    }
+
+    private fun sendFromVoice(text: String) {
+        val userMessage = ChatMessage(
+            id = Uuid.random().toString(),
+            role = MessageRole.USER,
+            content = text,
+        )
+
+        _state.update {
+            it.copy(
+                messages = it.messages + userMessage,
+                inputText = "",
+                isGenerating = true,
+                streamingText = "",
+                activeTools = emptyList(),
+                error = null,
+            )
+        }
+
+        voiceEngine.setThinking()
+
+        currentJob = viewModelScope.launch {
+            agent.run(text)
         }
     }
 }

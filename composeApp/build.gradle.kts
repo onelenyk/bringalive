@@ -47,6 +47,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.android)
             implementation(libs.activity.compose)
             implementation(libs.koin.android)
+            implementation(libs.ktor.client.okhttp)
         }
     }
 }
