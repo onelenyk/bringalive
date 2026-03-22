@@ -18,12 +18,21 @@ import kotlinx.coroutines.launch
 import kotlin.uuid.ExperimentalUuidApi
 import kotlin.uuid.Uuid
 
+data class AgentAction(
+    val step: Int = 0,
+    val totalSteps: Int = 0,
+    val action: String = "",
+    val target: String = "",
+    val status: String = "running", // running, done, failed
+)
+
 data class ChatUiState(
     val messages: List<ChatMessage> = emptyList(),
     val inputText: String = "",
     val isGenerating: Boolean = false,
     val streamingText: String = "",
     val activeTools: List<ToolStatus> = emptyList(),
+    val currentAction: AgentAction? = null,
     val error: String? = null,
     val conversations: List<ConversationMeta> = emptyList(),
     val activeConversationId: String? = null,
@@ -173,7 +182,11 @@ class ChatViewModel(
                                 activeTools = it.activeTools.map { tool ->
                                     if (tool.name == event.name) tool.copy(status = "running...")
                                     else tool
-                                }
+                                },
+                                currentAction = AgentAction(
+                                    action = event.name,
+                                    status = "running",
+                                ),
                             )
                         }
                     }
@@ -187,7 +200,10 @@ class ChatViewModel(
                                         result = event.result,
                                     )
                                     else tool
-                                }
+                                },
+                                currentAction = it.currentAction?.copy(
+                                    status = "done",
+                                ),
                             )
                         }
                     }
@@ -218,6 +234,7 @@ class ChatViewModel(
                                 isGenerating = false,
                                 streamingText = "",
                                 activeTools = emptyList(),
+                                currentAction = null,
                             )
                         }
                     }
@@ -228,6 +245,7 @@ class ChatViewModel(
                                 isGenerating = false,
                                 streamingText = "",
                                 activeTools = emptyList(),
+                                currentAction = null,
                                 error = event.message,
                             )
                         }

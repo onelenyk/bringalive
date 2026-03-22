@@ -191,6 +191,14 @@ class ChatScreen : Screen {
                         }
                     }
 
+                    // Agent status panel
+                    AgentStatusPanel(
+                        isGenerating = state.isGenerating,
+                        streamingText = state.streamingText,
+                        currentAction = state.currentAction,
+                        activeTools = state.activeTools,
+                    )
+
                     // Error banner
                     if (state.error != null) {
                         Surface(

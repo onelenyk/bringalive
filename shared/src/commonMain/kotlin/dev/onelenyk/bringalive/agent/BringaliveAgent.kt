@@ -122,15 +122,33 @@ class BringaliveAgent(
                     logStore.startTimer("tool:${ctx.toolCallId}")
                     logStore.info("TOOL", ">>> ${ctx.toolName}(${ctx.toolArgs})")
                     _streamEvents.emit(AgentEvent.ToolExecuting(ctx.toolName))
+
+                    // Persist tool call to conversation
+                    conversationManager.appendToActive(
+                        PersistedMessage(
+                            role = "tool_call",
+                            content = "${ctx.toolName}(${ctx.toolArgs})",
+                            toolName = ctx.toolName,
+                        )
+                    )
                 }
                 onToolCallCompleted { ctx ->
                     val ms = logStore.stopTimer("tool:${ctx.toolCallId}")
-                    val result = ctx.toolResult.toString().take(500)
-                    logStore.log(LogLevel.INFO, "TOOL", "<<< ${ctx.toolName} → $result", ms)
+                    val result = ctx.toolResult.toString().take(1000)
+                    logStore.log(LogLevel.INFO, "TOOL", "<<< ${ctx.toolName} → ${result.take(500)}", ms)
                     _streamEvents.emit(
                         AgentEvent.ToolCompleted(
                             name = ctx.toolName,
                             result = result.take(200),
+                        )
+                    )
+
+                    // Persist tool result to conversation
+                    conversationManager.appendToActive(
+                        PersistedMessage(
+                            role = "tool_result",
+                            content = result,
+                            toolName = ctx.toolName,
                         )
                     )
                 }
@@ -142,10 +160,12 @@ class BringaliveAgent(
                     logStore.error("TOOL", "VALIDATION FAILED ${ctx.toolName}: ${ctx.message} | args=${ctx.toolArgs}")
                 }
                 onAgentExecutionFailed { ctx ->
-                    logStore.error("AGENT", "Execution failed: ${ctx.throwable.message ?: ctx.throwable}")
+                    val trace = ctx.throwable.stackTraceToString().take(500)
+                    logStore.error("AGENT", "Execution failed: ${ctx.throwable.message}\n$trace")
                 }
                 onNodeExecutionFailed { ctx ->
-                    logStore.error("NODE", "Node failed: ${ctx.throwable.message ?: ctx.throwable}")
+                    val trace = ctx.throwable.stackTraceToString().take(500)
+                    logStore.error("NODE", "Node failed: ${ctx.throwable.message}\n$trace")
                 }
             }
         }
