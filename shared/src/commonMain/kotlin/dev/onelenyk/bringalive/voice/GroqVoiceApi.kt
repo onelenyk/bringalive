@@ -77,7 +77,7 @@ class GroqTtsClient(private val httpClient: HttpClient) {
     suspend fun synthesize(
         text: String,
         apiKey: String,
-        model: String = "playai-tts",
+        model: String,
         voice: String = "troy",
         responseFormat: String = "wav",
     ): TtsResult {
@@ -113,14 +113,40 @@ data class TtsResult(
     val error: String?,
 )
 
-/** Available Groq TTS voices. */
-enum class GroqVoice(val id: String, val displayName: String) {
-    TROY("troy", "Troy (male, calm)"),
-    ATLAS("atlas", "Atlas (male, warm)"),
-    LUNA("luna", "Luna (female, soft)"),
-    EMBER("ember", "Ember (female, bright)"),
-    COVE("cove", "Cove (male, deep)"),
-    VALE("vale", "Vale (female, clear)"),
+/** Available Groq TTS models. */
+enum class GroqTtsModel(val id: String, val displayName: String) {
+    ORPHEUS_ENGLISH("canopylabs/orpheus-v1-english", "Orpheus English"),
+    ORPHEUS_ARABIC("canopylabs/orpheus-arabic-saudi", "Orpheus Arabic (Saudi)"),
+}
+
+data class GroqTtsVoice(val id: String, val displayName: String, val model: GroqTtsModel)
+
+/** Registry of all TTS voices grouped by model. */
+object GroqTtsVoices {
+    private val allVoices = listOf(
+        GroqTtsVoice("troy", "Troy (male)", GroqTtsModel.ORPHEUS_ENGLISH),
+        GroqTtsVoice("austin", "Austin (male)", GroqTtsModel.ORPHEUS_ENGLISH),
+        GroqTtsVoice("daniel", "Daniel (male)", GroqTtsModel.ORPHEUS_ENGLISH),
+        GroqTtsVoice("autumn", "Autumn (female)", GroqTtsModel.ORPHEUS_ENGLISH),
+        GroqTtsVoice("diana", "Diana (female)", GroqTtsModel.ORPHEUS_ENGLISH),
+        GroqTtsVoice("hannah", "Hannah (female)", GroqTtsModel.ORPHEUS_ENGLISH),
+        GroqTtsVoice("fahad", "Fahad (male)", GroqTtsModel.ORPHEUS_ARABIC),
+        GroqTtsVoice("sultan", "Sultan (male)", GroqTtsModel.ORPHEUS_ARABIC),
+        GroqTtsVoice("lulwa", "Lulwa (female)", GroqTtsModel.ORPHEUS_ARABIC),
+        GroqTtsVoice("noura", "Noura (female)", GroqTtsModel.ORPHEUS_ARABIC),
+    )
+
+    fun voicesForModel(model: GroqTtsModel): List<GroqTtsVoice> =
+        allVoices.filter { it.model == model }
+
+    fun defaultVoiceForModel(model: GroqTtsModel): GroqTtsVoice =
+        voicesForModel(model).first()
+
+    fun findVoice(voiceId: String): GroqTtsVoice? =
+        allVoices.find { it.id == voiceId }
+
+    fun modelById(modelId: String): GroqTtsModel? =
+        GroqTtsModel.entries.find { it.id == modelId }
 }
 
 /** Available Groq STT models. */

@@ -30,6 +30,10 @@ class SettingsRepository(private val settings: Settings) {
         get() = settings.getString(KEY_TTS_VOICE, "troy")
         set(value) = settings.putString(KEY_TTS_VOICE, value)
 
+    var ttsModel: String
+        get() = settings.getString(KEY_TTS_MODEL, "canopylabs/orpheus-v1-english")
+        set(value) = settings.putString(KEY_TTS_MODEL, value)
+
     var sttModel: String
         get() = settings.getString(KEY_STT_MODEL, "whisper-large-v3-turbo")
         set(value) = settings.putString(KEY_STT_MODEL, value)
@@ -45,6 +49,7 @@ class SettingsRepository(private val settings: Settings) {
         private const val KEY_GROQ_API_KEY = "groq_api_key"
         private const val KEY_VOICE_LANG = "voice_language"
         private const val KEY_TTS_VOICE = "tts_voice"
+        private const val KEY_TTS_MODEL = "tts_model"
         private const val KEY_STT_MODEL = "stt_model"
         private const val KEY_AUTO_SPEAK = "auto_speak"
     }

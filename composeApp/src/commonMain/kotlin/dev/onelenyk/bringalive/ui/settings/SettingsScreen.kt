@@ -157,6 +157,145 @@ class SettingsScreen : Screen {
                 Spacer(Modifier.height(32.dp))
 
                 Text(
+                    "Voice (Groq)",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+
+                // Groq API Key
+                OutlinedTextField(
+                    value = state.groqApiKey,
+                    onValueChange = viewModel::onGroqApiKeyChanged,
+                    label = { Text("Groq API Key") },
+                    placeholder = { Text("gsk_...") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                )
+
+                Spacer(Modifier.height(16.dp))
+
+                Text(
+                    "Input (Speech-to-Text)",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(8.dp))
+
+                // Input language selector
+                var langExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = langExpanded,
+                    onExpandedChange = { langExpanded = it },
+                ) {
+                    OutlinedTextField(
+                        value = state.inputLanguages.find { it.first == state.voiceLanguage }?.second ?: "Auto-detect",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("I speak") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = langExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = langExpanded,
+                        onDismissRequest = { langExpanded = false },
+                    ) {
+                        state.inputLanguages.forEach { (id, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    viewModel.onVoiceLanguageChanged(id)
+                                    langExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                Text(
+                    "Output (Text-to-Speech)",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.height(8.dp))
+
+                // Output language selector
+                var outLangExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = outLangExpanded,
+                    onExpandedChange = { outLangExpanded = it },
+                ) {
+                    OutlinedTextField(
+                        value = state.availableTtsModels.find { it.first == state.ttsModel }?.second ?: "English",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Agent speaks") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = outLangExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = outLangExpanded,
+                        onDismissRequest = { outLangExpanded = false },
+                    ) {
+                        state.availableTtsModels.forEach { (id, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    viewModel.onTtsModelChanged(id)
+                                    outLangExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                // Voice selector
+                var voiceExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(
+                    expanded = voiceExpanded,
+                    onExpandedChange = { voiceExpanded = it },
+                ) {
+                    OutlinedTextField(
+                        value = state.availableVoices.find { it.first == state.ttsVoice }?.second ?: state.ttsVoice,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Voice") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = voiceExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = voiceExpanded,
+                        onDismissRequest = { voiceExpanded = false },
+                    ) {
+                        state.availableVoices.forEach { (id, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    viewModel.onTtsVoiceChanged(id)
+                                    voiceExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(16.dp))
+
+                // Test TTS button
+                androidx.compose.material3.Button(
+                    onClick = { viewModel.onTestTts() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Test TTS")
+                }
+
+                Spacer(Modifier.height(32.dp))
+
+                Text(
                     "About",
                     style = MaterialTheme.typography.titleMedium,
                 )

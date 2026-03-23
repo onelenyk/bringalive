@@ -40,6 +40,8 @@ data class ChatUiState(
     val activeConversationId: String? = null,
     val voiceState: VoiceState = VoiceState.IDLE,
     val voiceAmplitude: Float = 0f,
+    val callMode: Boolean = false,
+    val ttsEnabled: Boolean = false,
 )
 
 @OptIn(ExperimentalUuidApi::class)
@@ -129,6 +131,14 @@ class ChatViewModel(
         }
     }
 
+    fun onCallModeToggle() {
+        voiceEngine.toggleCallMode()
+    }
+
+    fun onTtsToggle() {
+        voiceEngine.toggleTts()
+    }
+
     fun onDismissError() {
         _state.update { it.copy(error = null) }
     }
@@ -181,8 +191,8 @@ class ChatViewModel(
                         _state.update {
                             it.copy(streamingText = it.streamingText + event.text)
                         }
-                        // Feed to TTS if in voice mode
-                        if (voiceEngine.state.value != VoiceState.IDLE) {
+                        // Feed to TTS if in voice mode or TTS toggle is on
+                        if (voiceEngine.state.value != VoiceState.IDLE || voiceEngine.ttsEnabled.value) {
                             voiceEngine.onAgentTextDelta(event.text)
                         }
                     }
@@ -233,6 +243,16 @@ class ChatViewModel(
                     is AgentEvent.StreamEnd -> {}
 
                     is AgentEvent.Completed -> {
+                        // If TTS is enabled but no TextDelta was streamed (non-streaming provider),
+                        // feed the full response text to TTS before completing
+                        val ttsOn = voiceEngine.ttsEnabled.value
+                        val voiceActive = voiceEngine.state.value != VoiceState.IDLE
+                        if ((ttsOn || voiceActive) && voiceEngine.state.value != VoiceState.SPEAKING) {
+                            val fullText = _state.value.streamingText.ifBlank { event.fullText }
+                            if (fullText.isNotBlank()) {
+                                voiceEngine.onAgentTextDelta(fullText)
+                            }
+                        }
                         voiceEngine.onAgentResponseComplete()
                         val responseText = _state.value.streamingText.ifBlank { event.fullText }
 
@@ -294,6 +314,18 @@ class ChatViewModel(
         viewModelScope.launch {
             voiceEngine.transcribedText.collect { text ->
                 sendFromVoice(text)
+            }
+        }
+        // Call mode state
+        viewModelScope.launch {
+            voiceEngine.callMode.collect { cm ->
+                _state.update { it.copy(callMode = cm) }
+            }
+        }
+        // TTS enabled state
+        viewModelScope.launch {
+            voiceEngine.ttsEnabled.collect { enabled ->
+                _state.update { it.copy(ttsEnabled = enabled) }
             }
         }
         // Voice errors → UI

@@ -11,6 +11,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import dev.onelenyk.bringalive.model.ScreenSummary
 import dev.onelenyk.bringalive.model.UiElement
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 private const val TAG = "BringaliveA11y"
 
@@ -35,6 +36,37 @@ class BringaliveAccessibilityService : AccessibilityService() {
         instance = this
         overlay = FloatingOverlay(this)
         Log.i(TAG, "Service connected")
+        observeVoiceState()
+    }
+
+    private fun observeVoiceState() {
+        try {
+            val engine = org.koin.java.KoinJavaComponent.getKoin()
+                .getOrNull<dev.onelenyk.bringalive.voice.VoiceEngine>() ?: return
+            val scope = kotlinx.coroutines.CoroutineScope(
+                kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main
+            )
+            scope.launch {
+                engine.state.collect { state ->
+                    when (state) {
+                        dev.onelenyk.bringalive.voice.VoiceState.LISTENING ->
+                            overlay?.update(OverlayState(visible = true, title = "Listening..."))
+                        dev.onelenyk.bringalive.voice.VoiceState.RECORDING ->
+                            overlay?.update(OverlayState(visible = true, title = "Recording speech..."))
+                        dev.onelenyk.bringalive.voice.VoiceState.TRANSCRIBING ->
+                            overlay?.update(OverlayState(visible = true, title = "Transcribing..."))
+                        dev.onelenyk.bringalive.voice.VoiceState.THINKING ->
+                            overlay?.update(OverlayState(visible = true, title = "AI thinking..."))
+                        dev.onelenyk.bringalive.voice.VoiceState.SPEAKING ->
+                            overlay?.update(OverlayState(visible = true, title = "Speaking...", isComplete = false))
+                        dev.onelenyk.bringalive.voice.VoiceState.IDLE ->
+                            overlay?.hide()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not observe voice state: ${e.message}")
+        }
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {

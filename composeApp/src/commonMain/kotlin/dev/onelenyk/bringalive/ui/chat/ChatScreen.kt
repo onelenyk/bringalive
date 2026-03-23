@@ -1,5 +1,12 @@
 package dev.onelenyk.bringalive.ui.chat
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,11 +31,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,6 +68,7 @@ import dev.onelenyk.bringalive.model.ChatMessage
 import dev.onelenyk.bringalive.model.MessageRole
 import dev.onelenyk.bringalive.presentation.ChatViewModel
 import dev.onelenyk.bringalive.ui.logs.LogsScreen
+import dev.onelenyk.bringalive.voice.VoiceState
 import dev.onelenyk.bringalive.ui.settings.SettingsScreen
 import kotlinx.coroutines.launch
 import org.koin.compose.viewmodel.koinViewModel
@@ -124,6 +134,30 @@ class ChatScreen : Screen {
                             }
                         },
                         actions = {
+                            // Call mode toggle
+                            IconButton(onClick = { viewModel.onCallModeToggle() }) {
+                                Icon(
+                                    imageVector = if (state.callMode) Icons.Default.CallEnd else Icons.Default.Call,
+                                    contentDescription = if (state.callMode) "End call" else "Call mode",
+                                    tint = if (state.callMode) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                )
+                            }
+                            // TTS speaker toggle
+                            IconButton(onClick = { viewModel.onTtsToggle() }) {
+                                Icon(
+                                    imageVector = if (state.ttsEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+                                    contentDescription = if (state.ttsEnabled) "Disable TTS" else "Enable TTS",
+                                    tint = if (state.ttsEnabled) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                            }
                             IconButton(onClick = { viewModel.onNewConversation() }) {
                                 Icon(Icons.Default.Add, contentDescription = "New chat")
                             }
@@ -225,6 +259,7 @@ class ChatScreen : Screen {
                         onMicToggle = viewModel::onMicToggle,
                         isGenerating = state.isGenerating,
                         voiceState = state.voiceState,
+                        voiceAmplitude = state.voiceAmplitude,
                         modifier = Modifier
                             .fillMaxWidth()
                             .navigationBarsPadding()
@@ -369,10 +404,11 @@ private fun ChatInputBar(
     onSend: () -> Unit,
     onMicToggle: () -> Unit,
     isGenerating: Boolean,
-    voiceState: dev.onelenyk.bringalive.voice.VoiceState,
+    voiceState: VoiceState,
+    voiceAmplitude: Float = 0f,
     modifier: Modifier = Modifier,
 ) {
-    val isVoiceActive = voiceState != dev.onelenyk.bringalive.voice.VoiceState.IDLE
+    val isVoiceActive = voiceState != VoiceState.IDLE
 
     Surface(
         tonalElevation = 2.dp,
@@ -383,66 +419,103 @@ private fun ChatInputBar(
             modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (isVoiceActive) {
-                // Voice mode: show state text instead of TextField
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                ) {
-                    Text(
-                        text = when (voiceState) {
-                            dev.onelenyk.bringalive.voice.VoiceState.LISTENING -> "Listening..."
-                            dev.onelenyk.bringalive.voice.VoiceState.RECORDING -> "Recording..."
-                            dev.onelenyk.bringalive.voice.VoiceState.TRANSCRIBING -> "Transcribing..."
-                            dev.onelenyk.bringalive.voice.VoiceState.THINKING -> "Thinking..."
-                            dev.onelenyk.bringalive.voice.VoiceState.SPEAKING -> "Speaking..."
-                            else -> ""
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.primary,
+            // Animated swap: TextField ↔ Voice indicator
+            AnimatedContent(
+                targetState = isVoiceActive,
+                modifier = Modifier.weight(1f),
+                transitionSpec = {
+                    fadeIn(tween(200)) togetherWith fadeOut(tween(200))
+                },
+                label = "inputMode",
+            ) { voiceActive ->
+                if (voiceActive) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        when (voiceState) {
+                            VoiceState.LISTENING, VoiceState.RECORDING -> {
+                                VoiceWaveform(
+                                    amplitude = voiceAmplitude,
+                                    isActive = voiceState == VoiceState.RECORDING,
+                                    barColor = if (voiceState == VoiceState.RECORDING) {
+                                        MaterialTheme.colorScheme.error
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            VoiceState.SPEAKING -> {
+                                SpeakingBars(modifier = Modifier.padding(end = 8.dp))
+                                Text(
+                                    "Speaking...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            VoiceState.TRANSCRIBING -> {
+                                Text(
+                                    "Transcribing...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            VoiceState.THINKING -> {
+                                Text(
+                                    "Thinking...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            else -> {}
+                        }
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = onTextChanged,
+                        placeholder = { Text("Message bringalive...") },
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 4,
+                        shape = RoundedCornerShape(20.dp),
                     )
                 }
-            } else {
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = onTextChanged,
-                    placeholder = { Text("Message bringalive...") },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 4,
-                    shape = RoundedCornerShape(20.dp),
-                )
             }
 
             Spacer(Modifier.width(4.dp))
 
-            // Mic button
-            IconButton(onClick = onMicToggle) {
-                Icon(
-                    imageVector = if (isVoiceActive) Icons.Default.Close else Icons.Default.Phone,
-                    contentDescription = if (isVoiceActive) "Stop" else "Voice",
-                    tint = when {
-                        voiceState == dev.onelenyk.bringalive.voice.VoiceState.RECORDING -> MaterialTheme.colorScheme.error
-                        isVoiceActive -> MaterialTheme.colorScheme.primary
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
-            }
-
-            // Send button (only in text mode with text)
-            if (!isVoiceActive && text.isNotBlank()) {
-                IconButton(
-                    onClick = onSend,
-                    enabled = !isGenerating,
-                ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.Send,
-                        contentDescription = "Send",
-                        tint = if (!isGenerating) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
+            // Right side: Mic button (always) + Send button (when text present)
+            AnimatedContent(
+                targetState = !isVoiceActive && text.isNotBlank(),
+                transitionSpec = {
+                    scaleIn(tween(150)) togetherWith scaleOut(tween(150))
+                },
+                label = "actionBtn",
+            ) { showSend ->
+                if (showSend) {
+                    IconButton(
+                        onClick = onSend,
+                        enabled = !isGenerating,
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "Send",
+                            tint = if (!isGenerating) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                    }
+                } else {
+                    MicButton(
+                        voiceState = voiceState,
+                        amplitude = voiceAmplitude,
+                        onClick = onMicToggle,
                     )
                 }
             }

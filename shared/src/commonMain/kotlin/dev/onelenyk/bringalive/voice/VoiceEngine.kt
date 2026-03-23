@@ -11,6 +11,8 @@ interface VoiceEngine {
     val amplitude: StateFlow<Float>
     val transcribedText: SharedFlow<String>
     val error: SharedFlow<String>
+    val callMode: StateFlow<Boolean>
+    val ttsEnabled: StateFlow<Boolean>
 
     fun startListening()
     fun stopListening()
@@ -18,5 +20,8 @@ interface VoiceEngine {
     fun onAgentTextDelta(delta: String)
     fun onAgentResponseComplete()
     fun setThinking()
+    fun toggleCallMode()  // enter/exit call mode
+    fun toggleTts()       // enable/disable TTS for all responses
+    fun testTts()         // speak a test sentence to verify TTS works
     fun destroy()
 }

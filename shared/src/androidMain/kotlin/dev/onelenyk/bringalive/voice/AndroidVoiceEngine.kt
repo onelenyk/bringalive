@@ -1,11 +1,15 @@
 package dev.onelenyk.bringalive.voice
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioRecord
-import android.media.MediaPlayer
+import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.util.Log
+import androidx.core.content.ContextCompat
 import dev.onelenyk.bringalive.data.AgentLogStore
 import dev.onelenyk.bringalive.data.SettingsRepository
 import io.ktor.client.HttpClient
@@ -25,8 +29,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
-import java.io.File
-import java.io.FileOutputStream
 import kotlin.math.abs
 import kotlin.math.log10
 import kotlin.math.sqrt
@@ -66,10 +68,16 @@ class AndroidVoiceEngine(
     private val _error = MutableSharedFlow<String>(extraBufferCapacity = 8)
     override val error: SharedFlow<String> = _error.asSharedFlow()
 
+    private val _callMode = MutableStateFlow(false)
+    override val callMode: StateFlow<Boolean> = _callMode.asStateFlow()
+
+    private val _ttsEnabled = MutableStateFlow(settings.autoSpeak)
+    override val ttsEnabled: StateFlow<Boolean> = _ttsEnabled.asStateFlow()
+
     // --- Audio ---
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
-    private var mediaPlayer: MediaPlayer? = null
+    private var audioTrack: AudioTrack? = null
     private var ttsJob: Job? = null
 
     // --- VAD Config ---
@@ -88,16 +96,35 @@ class AndroidVoiceEngine(
 
     // ========== Public API ==========
 
+    /** Set this from MainActivity to handle permission requests. */
+    var onPermissionNeeded: (() -> Unit)? = null
+
     override fun startListening() {
         if (_state.value != VoiceState.IDLE) {
             Log.w(TAG, "startListening: already in state ${_state.value}")
             return
         }
+
+        // Check runtime permission
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.w(TAG, "RECORD_AUDIO permission not granted, requesting...")
+            logStore.warn("VOICE", "Mic permission not granted — requesting")
+            onPermissionNeeded?.invoke()
+            return
+        }
+
         Log.i(TAG, "Starting voice listening")
         logStore.info("VOICE", "Listening started")
         _state.value = VoiceState.LISTENING
+        onServiceStart?.invoke()
         startAudioCapture()
     }
+
+    /** Called by platform to start/stop foreground service. */
+    var onServiceStart: (() -> Unit)? = null
+    var onServiceStop: (() -> Unit)? = null
 
     override fun stopListening() {
         Log.i(TAG, "Stopping voice listening")
@@ -107,10 +134,12 @@ class AndroidVoiceEngine(
     }
 
     override fun stopSpeaking() {
-        mediaPlayer?.stop()
-        mediaPlayer?.release()
-        mediaPlayer = null
+        try { audioTrack?.stop() } catch (_: Exception) {}
+        audioTrack?.release()
+        audioTrack = null
         ttsJob?.cancel()
+        ttsQueue.clear()
+        isTtsPlaying = false
         sentenceChunker.reset()
         if (_state.value == VoiceState.SPEAKING) {
             _state.value = VoiceState.IDLE
@@ -119,16 +148,47 @@ class AndroidVoiceEngine(
 
     /** Feed streaming text from agent for TTS. */
     override fun onAgentTextDelta(delta: String) {
-        if (_state.value != VoiceState.SPEAKING && _state.value != VoiceState.THINKING) return
+        val inVoiceFlow = _state.value == VoiceState.SPEAKING || _state.value == VoiceState.THINKING
+        if (!inVoiceFlow && !_ttsEnabled.value) return
+        if (settings.groqApiKey.isBlank()) return // no TTS without key
+
         val sentences = sentenceChunker.feed(delta)
         for (sentence in sentences) {
+            if (_state.value == VoiceState.IDLE || _state.value == VoiceState.THINKING) {
+                _state.value = VoiceState.SPEAKING
+            }
             enqueueTts(sentence)
         }
     }
 
     /** Flush remaining text when agent response is complete. */
     override fun onAgentResponseComplete() {
-        sentenceChunker.flush()?.let { enqueueTts(it) }
+        val inVoiceFlow = _state.value == VoiceState.THINKING || _state.value == VoiceState.SPEAKING
+        val shouldTts = inVoiceFlow || _ttsEnabled.value
+
+        val remaining = sentenceChunker.flush()
+        if (remaining != null && settings.groqApiKey.isNotBlank() && shouldTts) {
+            if (_state.value == VoiceState.IDLE || _state.value == VoiceState.THINKING) {
+                _state.value = VoiceState.SPEAKING
+            }
+            enqueueTts(remaining)
+        } else {
+            // No TTS to play
+            if (_state.value == VoiceState.THINKING || _state.value == VoiceState.SPEAKING) {
+                if (_callMode.value) {
+                    Log.d(TAG, "Agent done, no TTS — call mode, restarting listening")
+                    _state.value = VoiceState.IDLE
+                    scope.launch {
+                        delay(300)
+                        if (_callMode.value) startListening()
+                    }
+                } else {
+                    Log.d(TAG, "Agent response complete, no TTS — IDLE")
+                    _state.value = VoiceState.IDLE
+                    onServiceStop?.invoke()
+                }
+            }
+        }
     }
 
     /** Signal that agent is now processing (after STT). */
@@ -136,7 +196,52 @@ class AndroidVoiceEngine(
         _state.value = VoiceState.THINKING
     }
 
+    override fun toggleTts() {
+        val newVal = !_ttsEnabled.value
+        _ttsEnabled.value = newVal
+        settings.autoSpeak = newVal
+        Log.i(TAG, "TTS toggle: $newVal")
+        logStore.info("VOICE", "TTS ${if (newVal) "enabled" else "disabled"}")
+        if (!newVal) {
+            stopSpeaking()
+        }
+    }
+
+    override fun testTts() {
+        val apiKey = settings.groqApiKey
+        if (apiKey.isBlank()) {
+            scope.launch { _error.emit("Groq API key not set. Configure it above.") }
+            return
+        }
+        Log.i(TAG, "Testing TTS: model=${settings.ttsModel}, voice=${settings.ttsVoice}")
+        logStore.info("VOICE", "TTS test started")
+        stopSpeaking()
+        sentenceChunker.reset()
+        ttsQueue.clear()
+        _state.value = VoiceState.SPEAKING
+        enqueueTts("Hello! I am your personal assistant. Text to speech is working correctly.")
+    }
+
+    override fun toggleCallMode() {
+        if (_callMode.value) {
+            // Exit call mode
+            Log.i(TAG, "Call mode OFF")
+            logStore.info("VOICE", "Call mode ended")
+            _callMode.value = false
+            stopListening()
+            stopSpeaking()
+            onServiceStop?.invoke()
+        } else {
+            // Enter call mode
+            Log.i(TAG, "Call mode ON")
+            logStore.info("VOICE", "Call mode started")
+            _callMode.value = true
+            startListening()
+        }
+    }
+
     override fun destroy() {
+        _callMode.value = false
         stopListening()
         stopSpeaking()
         scope.cancel()
@@ -339,23 +444,44 @@ class AndroidVoiceEngine(
 
     // ========== TTS ==========
 
-    private val ttsQueue = java.util.concurrent.ConcurrentLinkedQueue<String>()
+    private data class TtsQueueItem(val text: String, val model: String, val voice: String)
+
+    private val ttsQueue = java.util.concurrent.ConcurrentLinkedQueue<TtsQueueItem>()
     @Volatile private var isTtsPlaying = false
 
     private fun enqueueTts(sentence: String) {
         if (settings.groqApiKey.isBlank()) return
-        ttsQueue.add(sentence)
+        // Validate voice for current model, fallback to default
+        val model = GroqTtsVoices.modelById(settings.ttsModel) ?: GroqTtsModel.ORPHEUS_ENGLISH
+        val validVoices = GroqTtsVoices.voicesForModel(model)
+        val voice = if (validVoices.any { it.id == settings.ttsVoice }) {
+            settings.ttsVoice
+        } else {
+            GroqTtsVoices.defaultVoiceForModel(model).id
+        }
+        ttsQueue.add(TtsQueueItem(sentence, model.id, voice))
         if (!isTtsPlaying) {
             processTtsQueue()
         }
     }
 
     private fun processTtsQueue() {
-        val sentence = ttsQueue.poll() ?: run {
+        val item = ttsQueue.poll() ?: run {
             isTtsPlaying = false
-            if (_state.value == VoiceState.SPEAKING) {
-                _state.value = VoiceState.IDLE
-                logStore.info("VOICE", "TTS finished")
+            if (_state.value == VoiceState.SPEAKING || _state.value == VoiceState.THINKING) {
+                if (_callMode.value) {
+                    Log.d(TAG, "TTS done — call mode, restarting listening")
+                    logStore.info("VOICE", "TTS done → listening again (call mode)")
+                    _state.value = VoiceState.IDLE
+                    scope.launch {
+                        delay(300)
+                        if (_callMode.value) startListening()
+                    }
+                } else {
+                    _state.value = VoiceState.IDLE
+                    logStore.info("VOICE", "TTS finished — IDLE")
+                    onServiceStop?.invoke()
+                }
             }
             return
         }
@@ -366,51 +492,145 @@ class AndroidVoiceEngine(
         ttsJob = scope.launch {
             logStore.startTimer("tts")
             val result = ttsClient.synthesize(
-                text = sentence,
+                text = item.text,
                 apiKey = settings.groqApiKey,
-                voice = settings.ttsVoice,
+                model = item.model,
+                voice = item.voice,
             )
             val ms = logStore.stopTimer("tts")
 
             if (result.error != null) {
                 logStore.error("VOICE", "TTS error: ${result.error}")
+                withContext(Dispatchers.Main) {
+                    _error.emit("TTS error: ${result.error}")
+                }
                 isTtsPlaying = false
+                // Try next item — one failure shouldn't stop all
+                withContext(Dispatchers.Main) { processTtsQueue() }
                 return@launch
             }
 
-            logStore.info("VOICE", "TTS: \"${sentence.take(50)}\" → ${result.audioBytes!!.size / 1024}KB (${ms}ms)")
+            val audioBytes = result.audioBytes!!
+            val header = audioBytes.take(4).map { "%02X".format(it) }.joinToString(" ")
+            logStore.info("VOICE", "TTS: \"${item.text.take(50)}\" → ${audioBytes.size / 1024}KB (${ms}ms) header=[$header]")
 
-            // Play the audio
+            // Play the WAV audio via AudioTrack (more robust than MediaPlayer for raw WAV)
             withContext(Dispatchers.IO) {
                 try {
-                    val tempFile = File.createTempFile("tts", ".wav", context.cacheDir)
-                    tempFile.writeBytes(result.audioBytes)
-
-                    withContext(Dispatchers.Main) {
-                        mediaPlayer?.release()
-                        mediaPlayer = MediaPlayer().apply {
-                            setDataSource(tempFile.absolutePath)
-                            prepare()
-                            setOnCompletionListener {
-                                tempFile.delete()
-                                processTtsQueue() // play next sentence
-                            }
-                            setOnErrorListener { _, _, _ ->
-                                tempFile.delete()
-                                isTtsPlaying = false
-                                false
-                            }
-                            start()
-                        }
-                    }
+                    playWavBytes(audioBytes)
+                    // Done playing, process next
+                    withContext(Dispatchers.Main) { processTtsQueue() }
                 } catch (e: Exception) {
                     Log.e(TAG, "TTS playback error", e)
                     logStore.error("VOICE", "TTS playback: ${e.message}")
+                    scope.launch { _error.emit("TTS playback: ${e.message}") }
                     isTtsPlaying = false
                 }
             }
         }
     }
+
+    /** Parse WAV header and play PCM data via AudioTrack. Blocking call. */
+    private fun playWavBytes(wavBytes: ByteArray) {
+        if (wavBytes.size < 44) throw IllegalArgumentException("WAV too small: ${wavBytes.size} bytes")
+
+        // Parse WAV header
+        val wavSampleRate = readIntLE(wavBytes, 24)
+        val wavChannels = readShortLE(wavBytes, 22)
+        val wavBitsPerSample = readShortLE(wavBytes, 34)
+
+        Log.d(TAG, "WAV: rate=$wavSampleRate ch=$wavChannels bits=$wavBitsPerSample size=${wavBytes.size}")
+
+        val channelConfig = if (wavChannels == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO
+        val audioEncoding = when (wavBitsPerSample) {
+            16 -> AudioFormat.ENCODING_PCM_16BIT
+            8 -> AudioFormat.ENCODING_PCM_8BIT
+            32 -> AudioFormat.ENCODING_PCM_FLOAT
+            else -> AudioFormat.ENCODING_PCM_16BIT
+        }
+
+        // Find "data" chunk — skip any extra chunks (Groq puts extra metadata before data)
+        var dataOffset = 12 // skip RIFF header
+        var dataSize = 0
+        while (dataOffset < wavBytes.size - 8) {
+            val chunkId = String(wavBytes, dataOffset, 4)
+            val chunkSize = readIntLE(wavBytes, dataOffset + 4)
+            if (chunkId == "data") {
+                dataOffset += 8
+                // chunkSize can be -1 (0xFFFFFFFF) meaning "rest of file"
+                dataSize = if (chunkSize <= 0) {
+                    wavBytes.size - dataOffset
+                } else {
+                    chunkSize.coerceAtMost(wavBytes.size - dataOffset)
+                }
+                break
+            }
+            // Skip unknown chunks; protect against bad chunkSize
+            if (chunkSize <= 0) break
+            dataOffset += 8 + chunkSize
+        }
+
+        if (dataSize <= 0) throw IllegalArgumentException("No data chunk in WAV (offset=$dataOffset)")
+
+        val minBuf = AudioTrack.getMinBufferSize(wavSampleRate, channelConfig, audioEncoding)
+            .coerceAtLeast(4096)
+        Log.d(TAG, "AudioTrack: dataOffset=$dataOffset dataSize=$dataSize minBuf=$minBuf")
+
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(wavSampleRate)
+                    .setChannelMask(channelConfig)
+                    .setEncoding(audioEncoding)
+                    .build()
+            )
+            .setBufferSizeInBytes(minBuf)
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+
+        if (track.state != AudioTrack.STATE_INITIALIZED) {
+            Log.e(TAG, "AudioTrack failed to initialize, state=${track.state}")
+            track.release()
+            throw IllegalStateException("AudioTrack init failed")
+        }
+
+        audioTrack = track
+        track.play()
+
+        // Stream PCM data in chunks
+        var offset = dataOffset
+        val end = dataOffset + dataSize
+        while (offset < end) {
+            val chunkSize = minOf(minBuf, end - offset)
+            val written = track.write(wavBytes, offset, chunkSize)
+            if (written < 0) {
+                Log.e(TAG, "AudioTrack write error: $written")
+                break
+            }
+            offset += written
+        }
+
+        // Wait for remaining buffered audio to finish
+        track.stop()
+        track.release()
+        audioTrack = null
+    }
+
+    private fun readIntLE(data: ByteArray, offset: Int): Int =
+        (data[offset].toInt() and 0xFF) or
+        ((data[offset + 1].toInt() and 0xFF) shl 8) or
+        ((data[offset + 2].toInt() and 0xFF) shl 16) or
+        ((data[offset + 3].toInt() and 0xFF) shl 24)
+
+    private fun readShortLE(data: ByteArray, offset: Int): Int =
+        (data[offset].toInt() and 0xFF) or
+        ((data[offset + 1].toInt() and 0xFF) shl 8)
 
     // ========== PCM → WAV ==========
 
