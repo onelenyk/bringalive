@@ -50,8 +50,22 @@ val TOOL_CATEGORIES: List<ToolCategory> = listOf(
         ToolDef("dumpScreen"),
         ToolDef("listInstalledApps"),
         ToolDef("tapElement", listOf(ParamDef("query", "Element text or desc", "OK"))),
+        ToolDef("tapAtIndex", listOf(ParamDef("index", "Element index from getScreenContent", "0"))),
+        ToolDef("tapAndWait", listOf(
+            ParamDef("query", "Element text or desc", "OK"),
+            ParamDef("waitMs", "Wait after tap (ms)", "1500"),
+        )),
+        ToolDef("longPress", listOf(ParamDef("query", "Element text or desc", ""))),
         ToolDef("typeText", listOf(ParamDef("text", "Text to type", "Hello"))),
+        ToolDef("focusAndType", listOf(
+            ParamDef("fieldQuery", "Field label or hint", "Search"),
+            ParamDef("text", "Text to type", "Hello"),
+        )),
         ToolDef("scrollScreen", listOf(ParamDef("direction", "up/down/left/right", "down"))),
+        ToolDef("scrollToFind", listOf(
+            ParamDef("query", "Text to scroll until found", ""),
+            ParamDef("maxScrolls", "Max scroll attempts", "10"),
+        )),
         ToolDef("swipe", listOf(ParamDef("direction", "up/down/left/right", "up"))),
         ToolDef("openApp", listOf(ParamDef("name", "App name", "Chrome"))),
         ToolDef("pressBack"),
@@ -147,8 +161,14 @@ val TOOL_CATEGORIES: List<ToolCategory> = listOf(
             ParamDef("category", "Category", "test"),
             ParamDef("content", "Content", "Test memory entry", multiline = true),
         )),
+        ToolDef("forgetMemory", listOf(ParamDef("query", "Text to match and remove", ""))),
+        ToolDef("updateUser", listOf(
+            ParamDef("section", "Section (Profile / Preferences / Current Projects)", "Preferences"),
+            ParamDef("content", "Content to add", "", multiline = true),
+        )),
+        ToolDef("addDailyNote", listOf(ParamDef("note", "Note text", "", multiline = true))),
         ToolDef("searchHistory", listOf(ParamDef("query", "Search query", ""))),
-        ToolDef("readWorkspaceFile", listOf(ParamDef("filename", "Filename", "user.md"))),
+        ToolDef("readWorkspaceFile", listOf(ParamDef("filename", "Filename", "USER.md"))),
         ToolDef("writeWorkspaceFile", listOf(
             ParamDef("filename", "Filename", "test.md"),
             ParamDef("content", "Content", "test content", multiline = true),
@@ -246,8 +266,16 @@ class ToolsViewModel(
             "dumpScreen"        -> tool<DumpArgs>("dumpScreen").execute(DumpArgs())
             "listInstalledApps" -> tool<ListAppsArgs>("listInstalledApps").execute(ListAppsArgs())
             "tapElement"        -> tool<TapElementArgs>("tapElement").execute(TapElementArgs(query = p["query"] ?: ""))
+            "tapAtIndex"        -> tool<TapAtIndexArgs>("tapAtIndex").execute(TapAtIndexArgs(index = p["index"]?.toIntOrNull() ?: 0))
+            "tapAndWait"        -> tool<TapAndWaitArgs>("tapAndWait").execute(TapAndWaitArgs(
+                query = p["query"] ?: "", waitMs = p["waitMs"]?.toLongOrNull() ?: 1500))
+            "longPress"         -> tool<LongPressArgs>("longPress").execute(LongPressArgs(query = p["query"] ?: ""))
             "typeText"          -> tool<TypeTextArgs>("typeText").execute(TypeTextArgs(text = p["text"] ?: ""))
+            "focusAndType"      -> tool<FocusAndTypeArgs>("focusAndType").execute(FocusAndTypeArgs(
+                fieldQuery = p["fieldQuery"] ?: "", text = p["text"] ?: ""))
             "scrollScreen"      -> tool<ScrollScreenArgs>("scrollScreen").execute(ScrollScreenArgs(direction = p["direction"] ?: "down"))
+            "scrollToFind"      -> tool<ScrollToFindArgs>("scrollToFind").execute(ScrollToFindArgs(
+                query = p["query"] ?: "", maxScrolls = p["maxScrolls"]?.toIntOrNull() ?: 10))
             "swipe"             -> tool<SwipeArgs>("swipe").execute(SwipeArgs(direction = p["direction"] ?: "up"))
             "openApp"           -> tool<OpenAppArgs>("openApp").execute(OpenAppArgs(name = p["name"] ?: ""))
             "pressBack"         -> tool<BackArgs>("pressBack").execute(BackArgs())
@@ -323,8 +351,12 @@ class ToolsViewModel(
             "listMemory"         -> ListMemoryTool(workspace).execute(ListMemoryArgs(filter = p["filter"] ?: ""))
             "saveMemory"         -> SaveMemoryTool(workspace).execute(SaveMemoryArgs(
                 category = p["category"] ?: "test", content = p["content"] ?: ""))
+            "forgetMemory"       -> ForgetMemoryTool(workspace).execute(ForgetMemoryArgs(query = p["query"] ?: ""))
+            "updateUser"         -> UpdateUserTool(workspace).execute(UpdateUserArgs(
+                section = p["section"] ?: "Preferences", content = p["content"] ?: ""))
+            "addDailyNote"       -> AddDailyNoteTool(workspace).execute(AddDailyNoteArgs(note = p["note"] ?: ""))
             "searchHistory"      -> SearchHistoryTool(workspace).execute(SearchHistoryArgs(query = p["query"] ?: ""))
-            "readWorkspaceFile"  -> ReadWorkspaceFileTool(workspace).execute(ReadFileArgs(filename = p["filename"] ?: "user.md"))
+            "readWorkspaceFile"  -> ReadWorkspaceFileTool(workspace).execute(ReadFileArgs(filename = p["filename"] ?: "USER.md"))
             "writeWorkspaceFile" -> WriteWorkspaceFileTool(workspace).execute(WriteFileArgs(
                 filename = p["filename"] ?: "test.md", content = p["content"] ?: ""))
 

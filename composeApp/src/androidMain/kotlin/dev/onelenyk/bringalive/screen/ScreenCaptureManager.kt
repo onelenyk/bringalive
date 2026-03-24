@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -15,8 +16,10 @@ import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
+import dev.onelenyk.bringalive.shizuku.ShizukuManager
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
 import kotlin.coroutines.resume
 
 private const val TAG = "ScreenCaptureManager"
@@ -27,8 +30,17 @@ class ScreenCaptureManager {
     private var resultCode: Int = Activity.RESULT_CANCELED
     private var resultData: Intent? = null
 
-    /** Whether the user has granted MediaProjection permission. */
-    fun isAvailable(): Boolean = resultData != null && resultCode == Activity.RESULT_OK
+    @Volatile private var shizukuManager: ShizukuManager? = null
+
+    /** Wire in ShizukuManager so screencap can be used as a permission-free alternative. */
+    fun setShizukuManager(shizuku: ShizukuManager) {
+        shizukuManager = shizuku
+    }
+
+    /** Whether ANY capture method is available (Shizuku or MediaProjection). */
+    fun isAvailable(): Boolean =
+        (shizukuManager?.hasPermission() == true) ||
+        (resultData != null && resultCode == Activity.RESULT_OK)
 
     /**
      * Store the result from MediaProjectionManager's screen capture intent.
@@ -42,9 +54,44 @@ class ScreenCaptureManager {
 
     /**
      * Capture the current screen as a Bitmap.
-     * Creates a new MediaProjection + VirtualDisplay for each capture, then tears them down.
+     * Prefers Shizuku screencap (no permission dialog, permanent).
+     * Falls back to MediaProjection if Shizuku is unavailable.
      */
     suspend fun captureScreen(context: Context): Bitmap? {
+        val shizuku = shizukuManager
+        if (shizuku != null && shizuku.hasPermission()) {
+            val bitmap = captureViaShizuku(context, shizuku)
+            if (bitmap != null) return bitmap
+            Log.w(TAG, "Shizuku capture failed — falling back to MediaProjection")
+        }
+        return captureViaMediaProjection(context)
+    }
+
+    private suspend fun captureViaShizuku(context: Context, shizuku: ShizukuManager): Bitmap? {
+        val dir = context.getExternalFilesDir(null) ?: context.cacheDir
+        val tmpFile = File(dir, ".screen_tmp.png")
+        return try {
+            val result = shizuku.executeCommand("screencap -p ${tmpFile.absolutePath}")
+            if (!result.isSuccess) {
+                Log.w(TAG, "screencap failed: ${result.stderr}")
+                return null
+            }
+            if (!tmpFile.exists()) {
+                Log.w(TAG, "screencap produced no file at ${tmpFile.absolutePath}")
+                return null
+            }
+            BitmapFactory.decodeFile(tmpFile.absolutePath).also {
+                tmpFile.delete()
+                Log.i(TAG, "Shizuku screencap: ${it?.width}x${it?.height}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "captureViaShizuku error", e)
+            tmpFile.delete()
+            null
+        }
+    }
+
+    private suspend fun captureViaMediaProjection(context: Context): Bitmap? {
         val data = resultData ?: run {
             Log.e(TAG, "No projection result data — permission not granted")
             return null

@@ -4,6 +4,7 @@ import android.app.Application
 import dev.onelenyk.bringalive.di.PlatformToolSets
 import dev.onelenyk.bringalive.di.WorkspacePath
 import dev.onelenyk.bringalive.di.initKoin
+import dev.onelenyk.bringalive.screen.ScreenCaptureManager
 import dev.onelenyk.bringalive.shizuku.ShizukuManager
 import dev.onelenyk.bringalive.tools.createAppManagementTools
 import dev.onelenyk.bringalive.tools.createDeviceTools
@@ -29,6 +30,7 @@ class BringaliveApplication : Application() {
         super.onCreate()
 
         val shizukuManager = ShizukuManager()
+        ScreenCaptureManager.instance.setShizukuManager(shizukuManager)
 
         initKoin {
             androidContext(this@BringaliveApplication)
