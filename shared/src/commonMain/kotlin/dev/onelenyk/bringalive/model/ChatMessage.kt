@@ -7,6 +7,7 @@ enum class MessageRole {
     USER,
     ASSISTANT,
     TOOL,
+    THINKING,
 }
 
 @Serializable
@@ -16,6 +17,7 @@ data class ChatMessage(
     val content: String,
     val toolName: String? = null,
     val isStreaming: Boolean = false,
+    val thinkingBlock: ThinkingBlock? = null,
 )
 
 data class ToolStatus(

@@ -8,6 +8,7 @@ import dev.onelenyk.bringalive.conversation.ConversationManager
 import dev.onelenyk.bringalive.conversation.ConversationMeta
 import dev.onelenyk.bringalive.model.ChatMessage
 import dev.onelenyk.bringalive.model.MessageRole
+import dev.onelenyk.bringalive.model.ThinkingBlock
 import dev.onelenyk.bringalive.model.ToolStatus
 import dev.onelenyk.bringalive.voice.VoiceEngine
 import dev.onelenyk.bringalive.voice.VoiceState
@@ -42,6 +43,7 @@ data class ChatUiState(
     val voiceAmplitude: Float = 0f,
     val callMode: Boolean = false,
     val ttsEnabled: Boolean = false,
+    val pendingThinking: ThinkingBlock? = null,
 )
 
 @OptIn(ExperimentalUuidApi::class)
@@ -64,7 +66,15 @@ class ChatViewModel(
     }
 
     fun onInputChanged(text: String) {
+        // Stop TTS when user starts typing (not in call mode — call mode barge-in uses mic button)
+        if (text.isNotEmpty() && voiceEngine.state.value == VoiceState.SPEAKING && !voiceEngine.callMode.value) {
+            voiceEngine.stopSpeaking()
+        }
         _state.update { it.copy(inputText = text) }
+    }
+
+    fun onStopSpeaking() {
+        voiceEngine.stopSpeaking()
     }
 
     fun onSendMessage() {
@@ -191,8 +201,8 @@ class ChatViewModel(
                         _state.update {
                             it.copy(streamingText = it.streamingText + event.text)
                         }
-                        // Feed to TTS if in voice mode or TTS toggle is on
-                        if (voiceEngine.state.value != VoiceState.IDLE || voiceEngine.ttsEnabled.value) {
+                        // Auto-TTS only in call mode — in TTS mode, AI speaks via speak() tool
+                        if (voiceEngine.callMode.value) {
                             voiceEngine.onAgentTextDelta(event.text)
                         }
                     }
@@ -242,19 +252,32 @@ class ChatViewModel(
 
                     is AgentEvent.StreamEnd -> {}
 
+                    is AgentEvent.Thinking -> {
+                        _state.update {
+                            it.copy(pendingThinking = ThinkingBlock(event.goal, event.steps, event.reasoning))
+                        }
+                    }
+
                     is AgentEvent.Completed -> {
-                        // If TTS is enabled but no TextDelta was streamed (non-streaming provider),
-                        // feed the full response text to TTS before completing
-                        val ttsOn = voiceEngine.ttsEnabled.value
-                        val voiceActive = voiceEngine.state.value != VoiceState.IDLE
-                        if ((ttsOn || voiceActive) && voiceEngine.state.value != VoiceState.SPEAKING) {
+                        // In call mode, feed full text to TTS if streaming didn't already start it
+                        if (voiceEngine.callMode.value && voiceEngine.state.value != VoiceState.SPEAKING) {
                             val fullText = _state.value.streamingText.ifBlank { event.fullText }
                             if (fullText.isNotBlank()) {
                                 voiceEngine.onAgentTextDelta(fullText)
                             }
                         }
+                        // Always call complete — manages call-mode listening restart + state cleanup
                         voiceEngine.onAgentResponseComplete()
                         val responseText = _state.value.streamingText.ifBlank { event.fullText }
+
+                        val thinkingMessages = _state.value.pendingThinking?.let { t ->
+                            listOf(ChatMessage(
+                                id = Uuid.random().toString(),
+                                role = MessageRole.THINKING,
+                                content = t.goal,
+                                thinkingBlock = t,
+                            ))
+                        } ?: emptyList()
 
                         val toolMessages = _state.value.activeTools.map { tool ->
                             ChatMessage(
@@ -273,11 +296,12 @@ class ChatViewModel(
 
                         _state.update {
                             it.copy(
-                                messages = it.messages + toolMessages + assistantMessage,
+                                messages = it.messages + thinkingMessages + toolMessages + assistantMessage,
                                 isGenerating = false,
                                 streamingText = "",
                                 activeTools = emptyList(),
                                 currentAction = null,
+                                pendingThinking = null,
                             )
                         }
                     }
@@ -289,6 +313,7 @@ class ChatViewModel(
                                 streamingText = "",
                                 activeTools = emptyList(),
                                 currentAction = null,
+                                pendingThinking = null,
                                 error = event.message,
                             )
                         }
@@ -337,6 +362,9 @@ class ChatViewModel(
     }
 
     private fun sendFromVoice(text: String) {
+        // Cancel any in-progress agent run (e.g. barge-in while agent was still working)
+        currentJob?.cancel()
+
         val userMessage = ChatMessage(
             id = Uuid.random().toString(),
             role = MessageRole.USER,

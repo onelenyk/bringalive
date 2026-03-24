@@ -172,6 +172,10 @@ private val DEFAULT_AGENTS = """
 private val DEFAULT_TOOLS = """
 # Tools
 
+## think
+Call FIRST before any multi-step task. Provide goal + ordered steps + optional reasoning.
+Skip for single-step actions or conversational responses.
+
 ## getCurrentTime
 Use when user asks about time, date, or scheduling.
 Respect timezone from USER.md if available.

@@ -13,11 +13,8 @@ kotlin {
         }
     }
 
-    listOf(
-        iosX64(),
-        iosArm64(),
-        iosSimulatorArm64()
-    ).forEach { iosTarget ->
+    val iosTargets = listOf(iosX64(), iosArm64(), iosSimulatorArm64())
+    iosTargets.forEach { iosTarget ->
         iosTarget.binaries.framework {
             baseName = "ComposeApp"
             isStatic = true
@@ -25,6 +22,9 @@ kotlin {
     }
 
     sourceSets {
+        val iosMain by creating { dependsOn(commonMain.get()) }
+        iosTargets.forEach { it.compilations["main"].defaultSourceSet.dependsOn(iosMain) }
+
         commonMain.dependencies {
             implementation(projects.shared)
             implementation(compose.runtime)
@@ -42,6 +42,7 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.koog.agents)
+            implementation(libs.markdown.renderer.m3)
         }
 
         androidMain.dependencies {
@@ -49,6 +50,9 @@ kotlin {
             implementation(libs.activity.compose)
             implementation(libs.koin.android)
             implementation(libs.ktor.client.okhttp)
+            implementation(libs.mlkit.text.recognition)
+            implementation(libs.shizuku.api)
+            implementation(libs.shizuku.provider)
         }
     }
 }
@@ -56,6 +60,12 @@ kotlin {
 android {
     namespace = "dev.onelenyk.bringalive"
     compileSdk = 35
+
+    buildFeatures {
+        aidl = true
+    }
+
+    sourceSets["main"].aidl.srcDirs("src/androidMain/aidl")
 
     defaultConfig {
         applicationId = "dev.onelenyk.bringalive"

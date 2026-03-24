@@ -1,11 +1,14 @@
 package dev.onelenyk.bringalive.ui.chat
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -15,7 +18,9 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -31,14 +36,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -62,12 +70,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import cafe.adriel.voyager.core.screen.Screen
+import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownColor
+import com.mikepenz.markdown.m3.markdownTypography
 import cafe.adriel.voyager.navigator.LocalNavigator
 import cafe.adriel.voyager.navigator.currentOrThrow
 import dev.onelenyk.bringalive.model.ChatMessage
 import dev.onelenyk.bringalive.model.MessageRole
+import dev.onelenyk.bringalive.model.ThinkingBlock
 import dev.onelenyk.bringalive.presentation.ChatViewModel
 import dev.onelenyk.bringalive.ui.logs.LogsScreen
+import dev.onelenyk.bringalive.ui.tools.createToolsScreen
 import dev.onelenyk.bringalive.voice.VoiceState
 import dev.onelenyk.bringalive.ui.settings.SettingsScreen
 import kotlinx.coroutines.launch
@@ -86,7 +99,10 @@ class ChatScreen : Screen {
         val scope = rememberCoroutineScope()
 
         // Scroll to bottom on new messages or streaming
-        val scrollTarget = state.messages.size + if (state.streamingText.isNotEmpty()) 1 else 0
+        val scrollTarget = state.messages.size +
+            (if (state.pendingThinking != null) 1 else 0) +
+            (if (state.activeTools.isNotEmpty()) state.activeTools.size else 0) +
+            (if (state.streamingText.isNotEmpty()) 1 else 0)
         LaunchedEffect(scrollTarget, state.streamingText) {
             if (scrollTarget > 0) {
                 listState.animateScrollToItem(scrollTarget - 1)
@@ -146,20 +162,11 @@ class ChatScreen : Screen {
                                     },
                                 )
                             }
-                            // TTS speaker toggle
-                            IconButton(onClick = { viewModel.onTtsToggle() }) {
-                                Icon(
-                                    imageVector = if (state.ttsEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-                                    contentDescription = if (state.ttsEnabled) "Disable TTS" else "Enable TTS",
-                                    tint = if (state.ttsEnabled) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                    },
-                                )
-                            }
                             IconButton(onClick = { viewModel.onNewConversation() }) {
                                 Icon(Icons.Default.Add, contentDescription = "New chat")
+                            }
+                            IconButton(onClick = { navigator.push(createToolsScreen()) }) {
+                                Icon(Icons.Default.Build, contentDescription = "Tools")
                             }
                             IconButton(onClick = { navigator.push(LogsScreen()) }) {
                                 Icon(Icons.Default.Info, contentDescription = "Logs")
@@ -191,13 +198,20 @@ class ChatScreen : Screen {
                             }
                         }
                         items(state.messages, key = { it.id }) { message ->
-                            if (message.role == MessageRole.TOOL) {
-                                ToolExecutionCard(
+                            when (message.role) {
+                                MessageRole.THINKING -> ThinkingCard(block = message.thinkingBlock!!)
+                                MessageRole.TOOL -> ToolExecutionCard(
                                     toolName = message.toolName ?: "tool",
                                     result = message.content,
                                 )
-                            } else {
-                                ChatBubble(message)
+                                else -> ChatBubble(message)
+                            }
+                        }
+
+                        // Pending thinking card (shown during generation)
+                        state.pendingThinking?.let { pending ->
+                            item(key = "thinking_pending") {
+                                ThinkingCard(block = pending, isPending = true)
                             }
                         }
 
@@ -251,6 +265,20 @@ class ChatScreen : Screen {
                         }
                     }
 
+                    // Stop speaking chip — shown when TTS is playing (non-call mode)
+                    AnimatedVisibility(
+                        visible = state.voiceState == VoiceState.SPEAKING && !state.callMode,
+                        enter = fadeIn(tween(150)) + slideInVertically { it },
+                        exit = fadeOut(tween(150)) + slideOutVertically { it },
+                    ) {
+                        StopSpeakingChip(
+                            onClick = { viewModel.onStopSpeaking() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
+
                     // Input bar
                     ChatInputBar(
                         text = state.inputText,
@@ -293,61 +321,95 @@ private fun EmptyState() {
 }
 
 @Composable
-private fun ChatBubble(message: ChatMessage) {
-    val isUser = message.role == MessageRole.USER
-    val alignment = if (isUser) Alignment.CenterEnd else Alignment.CenterStart
-    val backgroundColor = if (isUser) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.surfaceContainerHigh
-    }
-    val textColor = if (isUser) {
-        MaterialTheme.colorScheme.onPrimary
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-
-    Box(
-        modifier = Modifier.fillMaxWidth(),
-        contentAlignment = alignment,
+private fun StopSpeakingChip(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        modifier = modifier,
     ) {
         Row(
-            verticalAlignment = Alignment.Top,
-            modifier = Modifier.widthIn(max = 320.dp),
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
         ) {
-            if (!isUser) {
-                Box(
-                    modifier = Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.primaryContainer),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "B",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-            }
+            Icon(
+                imageVector = Icons.Default.Close,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "Stop speaking",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+        }
+    }
+}
 
+@Composable
+private fun ChatBubble(message: ChatMessage) {
+    val isUser = message.role == MessageRole.USER
+
+    if (isUser) {
+        Box(
+            modifier = Modifier.fillMaxWidth(),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
             Surface(
-                shape = RoundedCornerShape(
-                    topStart = if (isUser) 16.dp else 4.dp,
-                    topEnd = if (isUser) 4.dp else 16.dp,
-                    bottomStart = 16.dp,
-                    bottomEnd = 16.dp,
-                ),
-                color = backgroundColor,
+                shape = RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomStart = 16.dp, bottomEnd = 16.dp),
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.widthIn(max = 300.dp),
             ) {
                 Text(
                     text = message.content,
-                    color = textColor,
+                    color = MaterialTheme.colorScheme.onPrimary,
                     style = MaterialTheme.typography.bodyMedium,
                     modifier = Modifier.padding(12.dp),
                 )
             }
+        }
+    } else {
+        Row(
+            verticalAlignment = Alignment.Top,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    "B",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Markdown(
+                content = message.content,
+                colors = markdownColor(
+                    text = MaterialTheme.colorScheme.onSurface,
+                    codeText = MaterialTheme.colorScheme.onSurfaceVariant,
+                    codeBackground = MaterialTheme.colorScheme.surfaceContainerHighest,
+                    dividerColor = MaterialTheme.colorScheme.outlineVariant,
+                ),
+                typography = markdownTypography(
+                    text = MaterialTheme.typography.bodyMedium,
+                    code = MaterialTheme.typography.bodySmall,
+                    h1 = MaterialTheme.typography.titleLarge,
+                    h2 = MaterialTheme.typography.titleMedium,
+                    h3 = MaterialTheme.typography.titleSmall,
+                    h4 = MaterialTheme.typography.labelLarge,
+                    h5 = MaterialTheme.typography.labelMedium,
+                    h6 = MaterialTheme.typography.labelSmall,
+                ),
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }
@@ -392,6 +454,69 @@ private fun ToolExecutionCard(
                     maxLines = 3,
                     modifier = Modifier.padding(top = 4.dp),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThinkingCard(block: ThinkingBlock, isPending: Boolean = false) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        tonalElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth().padding(start = 36.dp),
+    ) {
+        Row {
+            Box(
+                Modifier
+                    .fillMaxHeight()
+                    .width(3.dp)
+                    .background(MaterialTheme.colorScheme.tertiary),
+            )
+            Column(Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                    ) {
+                        Text(
+                            text = "Plan",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = block.goal,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                block.steps.forEachIndexed { i, step ->
+                    Text(
+                        text = "${i + 1}. $step",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(vertical = 1.dp),
+                    )
+                }
+                if (block.reasoning.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = block.reasoning,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (isPending) {
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(2.dp)),
+                    )
+                }
             }
         }
     }

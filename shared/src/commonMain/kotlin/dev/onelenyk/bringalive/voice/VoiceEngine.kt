@@ -23,5 +23,6 @@ interface VoiceEngine {
     fun toggleCallMode()  // enter/exit call mode
     fun toggleTts()       // enable/disable TTS for all responses
     fun testTts()         // speak a test sentence to verify TTS works
+    suspend fun speak(text: String)  // speak specific text (AI-controlled, bypasses ttsEnabled)
     fun destroy()
 }

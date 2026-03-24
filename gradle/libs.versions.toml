@@ -14,6 +14,8 @@ multiplatform-settings = "1.3.0"
 compose-icons-extended = "1.7.6"
 lifecycle = "2.8.4"
 activity-compose = "1.10.1"
+shizuku = "13.1.5"
+markdown-renderer = "0.30.0"
 
 [libraries]
 # Koog
@@ -61,6 +63,16 @@ activity-compose = { module = "androidx.activity:activity-compose", version.ref 
 # Settings
 multiplatform-settings = { module = "com.russhwolf:multiplatform-settings", version.ref = "multiplatform-settings" }
 multiplatform-settings-no-arg = { module = "com.russhwolf:multiplatform-settings-no-arg", version.ref = "multiplatform-settings" }
+
+# ML Kit
+mlkit-text-recognition = { module = "com.google.mlkit:text-recognition", version = "16.0.1" }
+
+# Shizuku
+shizuku-api = { module = "dev.rikka.shizuku:api", version.ref = "shizuku" }
+shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizuku" }
+
+# Markdown
+markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -23,6 +23,7 @@ import dev.onelenyk.bringalive.workspace.WorkspaceManager
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.serialization.json.Json
 
 class BringaliveAgent(
     private val settingsRepository: SettingsRepository,
@@ -59,6 +60,7 @@ class BringaliveAgent(
         }
 
         val workspaceTools: List<Tool<*, *>> = listOf(
+            ThinkTool(),
             GetCurrentTimeTool(),
             SaveMemoryTool(workspace),
             ForgetMemoryTool(workspace),
@@ -107,7 +109,9 @@ class BringaliveAgent(
                             _streamEvents.emit(AgentEvent.TextDelta(frame.text))
                         }
                         is StreamFrame.ToolCallComplete -> {
-                            _streamEvents.emit(AgentEvent.ToolCallStarted(frame.name))
+                            if (frame.name != "think") {
+                                _streamEvents.emit(AgentEvent.ToolCallStarted(frame.name))
+                            }
                         }
                         is StreamFrame.End -> {
                             _streamEvents.emit(AgentEvent.StreamEnd)
@@ -121,7 +125,18 @@ class BringaliveAgent(
                 onToolCallStarting { ctx ->
                     logStore.startTimer("tool:${ctx.toolCallId}")
                     logStore.info("TOOL", ">>> ${ctx.toolName}(${ctx.toolArgs})")
-                    _streamEvents.emit(AgentEvent.ToolExecuting(ctx.toolName))
+
+                    if (ctx.toolName == "think") {
+                        try {
+                            val thinkArgs = Json { ignoreUnknownKeys = true }
+                                .decodeFromString<ThinkArgs>(ctx.toolArgs.toString())
+                            _streamEvents.emit(AgentEvent.Thinking(thinkArgs.goal, thinkArgs.steps, thinkArgs.reasoning))
+                        } catch (_: Exception) {
+                            _streamEvents.emit(AgentEvent.ToolExecuting(ctx.toolName))
+                        }
+                    } else {
+                        _streamEvents.emit(AgentEvent.ToolExecuting(ctx.toolName))
+                    }
 
                     // Persist tool call to conversation
                     conversationManager.appendToActive(
@@ -136,12 +151,15 @@ class BringaliveAgent(
                     val ms = logStore.stopTimer("tool:${ctx.toolCallId}")
                     val result = ctx.toolResult.toString().take(1000)
                     logStore.log(LogLevel.INFO, "TOOL", "<<< ${ctx.toolName} → ${result.take(500)}", ms)
-                    _streamEvents.emit(
-                        AgentEvent.ToolCompleted(
-                            name = ctx.toolName,
-                            result = result.take(200),
+
+                    if (ctx.toolName != "think") {
+                        _streamEvents.emit(
+                            AgentEvent.ToolCompleted(
+                                name = ctx.toolName,
+                                result = result.take(200),
+                            )
                         )
-                    )
+                    }
 
                     // Persist tool result to conversation
                     conversationManager.appendToActive(
@@ -238,4 +256,5 @@ sealed interface AgentEvent {
     data object StreamEnd : AgentEvent
     data class Completed(val fullText: String) : AgentEvent
     data class Error(val message: String) : AgentEvent
+    data class Thinking(val goal: String, val steps: List<String>, val reasoning: String) : AgentEvent
 }

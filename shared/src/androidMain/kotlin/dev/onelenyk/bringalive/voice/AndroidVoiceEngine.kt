@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -79,6 +80,7 @@ class AndroidVoiceEngine(
     private var recordingJob: Job? = null
     private var audioTrack: AudioTrack? = null
     private var ttsJob: Job? = null
+    private var bargeInJob: Job? = null
 
     // --- VAD Config ---
     private val sampleRate = 16000
@@ -134,6 +136,8 @@ class AndroidVoiceEngine(
     }
 
     override fun stopSpeaking() {
+        bargeInJob?.cancel()
+        bargeInJob = null
         try { audioTrack?.stop() } catch (_: Exception) {}
         audioTrack?.release()
         audioTrack = null
@@ -220,6 +224,20 @@ class AndroidVoiceEngine(
         ttsQueue.clear()
         _state.value = VoiceState.SPEAKING
         enqueueTts("Hello! I am your personal assistant. Text to speech is working correctly.")
+    }
+
+    override suspend fun speak(text: String) {
+        if (settings.groqApiKey.isBlank()) return
+        stopSpeaking()
+        sentenceChunker.reset()
+        val sentences = (sentenceChunker.feed(text) + listOfNotNull(sentenceChunker.flush()))
+            .filter { it.isNotBlank() }
+        if (sentences.isEmpty()) return
+        _state.value = VoiceState.SPEAKING
+        for (sentence in sentences) enqueueTts(sentence)
+        if (!isTtsPlaying) processTtsQueue()
+        // Suspend until playback finishes or gets interrupted
+        state.first { it != VoiceState.SPEAKING }
     }
 
     override fun toggleCallMode() {
@@ -372,6 +390,86 @@ class AndroidVoiceEngine(
         audioRecord = null
     }
 
+    private fun startBargeInListener() {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) return
+        bargeInJob?.cancel()
+
+        val bufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+            .coerceAtLeast(4096)
+
+        Log.i(TAG, "Barge-in: starting listener (bufferSize=$bufferSize)")
+
+        bargeInJob = scope.launch(Dispatchers.IO) {
+            // Try VOICE_RECOGNITION first (has echo cancellation); fall back to MIC
+            val recorder = createBargeInRecorder(bufferSize) ?: run {
+                Log.e(TAG, "Barge-in: failed to create AudioRecord")
+                return@launch
+            }
+
+            recorder.startRecording()
+            Log.i(TAG, "Barge-in: recorder started, state=${recorder.state}")
+
+            val buffer = ShortArray(bufferSize / 2)
+            var consecutiveSpeechFrames = 0
+            var frameCount = 0
+            try {
+                while (isActive && _state.value == VoiceState.SPEAKING) {
+                    val read = recorder.read(buffer, 0, buffer.size)
+                    if (read <= 0) continue
+
+                    val rms = calculateRms(buffer, read)
+                    val db = if (rms > 0) 20 * log10(rms / 32768.0) else -100.0
+                    frameCount++
+
+                    // Log audio levels every 40 frames to help tune threshold
+                    if (frameCount % 40 == 0) {
+                        Log.d(TAG, "Barge-in: db=${"%.1f".format(db)} threshold=$vadThresholdDb state=${_state.value}")
+                    }
+
+                    if (db > vadThresholdDb) {
+                        consecutiveSpeechFrames++
+                        if (consecutiveSpeechFrames >= 2) {
+                            Log.i(TAG, "Barge-in TRIGGERED (db=${"%.1f".format(db)}, frames=$consecutiveSpeechFrames)")
+                            logStore.info("VOICE", "Barge-in: user interrupted TTS")
+                            withContext(Dispatchers.Main) {
+                                if (_state.value == VoiceState.SPEAKING) {
+                                    stopSpeaking()
+                                    startListening()
+                                }
+                            }
+                            return@launch
+                        }
+                    } else {
+                        consecutiveSpeechFrames = 0
+                    }
+                }
+                Log.d(TAG, "Barge-in: loop ended (state=${_state.value})")
+            } finally {
+                try { recorder.stop() } catch (_: Exception) {}
+                recorder.release()
+                Log.i(TAG, "Barge-in: listener stopped")
+            }
+        }
+    }
+
+    private fun createBargeInRecorder(bufferSize: Int): AudioRecord? {
+        for (source in listOf(MediaRecorder.AudioSource.VOICE_RECOGNITION, MediaRecorder.AudioSource.MIC)) {
+            try {
+                val rec = AudioRecord(source, sampleRate, channelConfig, audioFormat, bufferSize)
+                if (rec.state == AudioRecord.STATE_INITIALIZED) {
+                    Log.i(TAG, "Barge-in: AudioRecord created with source=$source")
+                    return rec
+                }
+                Log.w(TAG, "Barge-in: source=$source state=${rec.state}, trying next")
+                rec.release()
+            } catch (e: Exception) {
+                Log.w(TAG, "Barge-in: source=$source threw ${e.message}, trying next")
+            }
+        }
+        return null
+    }
+
     private fun calculateRms(buffer: ShortArray, size: Int): Double {
         var sum = 0.0
         for (i in 0 until size) {
@@ -461,6 +559,7 @@ class AndroidVoiceEngine(
         }
         ttsQueue.add(TtsQueueItem(sentence, model.id, voice))
         if (!isTtsPlaying) {
+            startBargeInListener()
             processTtsQueue()
         }
     }
