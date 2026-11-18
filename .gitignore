@@ -11,3 +11,9 @@ local.properties
 captures/
 *.hprof
 .claude/settings.local.json
+
+# local runtime artifacts and agent worktrees
+libs/*.aar
+logs/
+*.log
+.claude/

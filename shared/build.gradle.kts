@@ -41,6 +41,7 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.ktor.client.okhttp)
             implementation(libs.kotlinx.coroutines.android)
+            implementation(files("../libs/sherpa-onnx.aar"))
         }
 
         iosMain.dependencies {

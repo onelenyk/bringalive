@@ -12,6 +12,11 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import dev.onelenyk.bringalive.screen.ScreenCaptureManager
+import dev.onelenyk.bringalive.assistant.AndroidAssistantEngine
+import dev.onelenyk.bringalive.assistant.AssistantEngine
+import dev.onelenyk.bringalive.listener.AndroidPassiveListenerEngine
+import dev.onelenyk.bringalive.listener.PassiveListenerEngine
+import dev.onelenyk.bringalive.service.ListenerForegroundService
 import dev.onelenyk.bringalive.service.VoiceForegroundService
 import dev.onelenyk.bringalive.ui.App
 import dev.onelenyk.bringalive.voice.AndroidVoiceEngine
@@ -60,8 +65,31 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Request screen capture permission on startup so tools can use it
-        requestScreenCapturePermission()
+        val passiveEngine = getKoin().get<PassiveListenerEngine>()
+        if (passiveEngine is AndroidPassiveListenerEngine) {
+            passiveEngine.onPermissionNeeded = {
+                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+            passiveEngine.onServiceStart = {
+                ListenerForegroundService.start(this)
+            }
+            passiveEngine.onServiceStop = {
+                ListenerForegroundService.stop(this)
+            }
+        }
+
+        val assistantEngine = getKoin().get<AssistantEngine>()
+        if (assistantEngine is AndroidAssistantEngine) {
+            assistantEngine.onPermissionNeeded = {
+                micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+            assistantEngine.onServiceStart = {
+                ListenerForegroundService.start(this)
+            }
+            assistantEngine.onServiceStop = {
+                ListenerForegroundService.stop(this)
+            }
+        }
 
         setContent {
             App()

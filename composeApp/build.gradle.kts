@@ -41,6 +41,7 @@ kotlin {
             implementation(libs.voyager.koin)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.kotlinx.datetime)
             implementation(libs.koog.agents)
             implementation(libs.markdown.renderer.m3)
         }

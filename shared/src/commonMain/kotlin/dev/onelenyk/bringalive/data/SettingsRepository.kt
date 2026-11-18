@@ -42,6 +42,30 @@ class SettingsRepository(private val settings: Settings) {
         get() = settings.getBoolean(KEY_AUTO_SPEAK, true)
         set(value) = settings.putBoolean(KEY_AUTO_SPEAK, value)
 
+    // --- Listener settings ---
+
+    var listenerIntervalMinutes: Int
+        get() = settings.getInt(KEY_LISTENER_INTERVAL, 10)
+        set(value) = settings.putInt(KEY_LISTENER_INTERVAL, value)
+
+    // --- Assistant settings ---
+
+    var assistantWakeWord: String
+        get() = settings.getString(KEY_ASSISTANT_WAKE_WORD, "hey note")
+        set(value) = settings.putString(KEY_ASSISTANT_WAKE_WORD, value)
+
+    var kwsThreshold: Float
+        get() = settings.getFloat(KEY_KWS_THRESHOLD, 0.25f)
+        set(value) = settings.putFloat(KEY_KWS_THRESHOLD, value)
+
+    var kwsScore: Float
+        get() = settings.getFloat(KEY_KWS_SCORE, 1.5f)
+        set(value) = settings.putFloat(KEY_KWS_SCORE, value)
+
+    var kwsTrailingBlanks: Int
+        get() = settings.getInt(KEY_KWS_TRAILING_BLANKS, 1)
+        set(value) = settings.putInt(KEY_KWS_TRAILING_BLANKS, value)
+
     companion object {
         private const val KEY_PROVIDER = "llm_provider"
         private const val KEY_API_KEY = "llm_api_key"
@@ -52,5 +76,10 @@ class SettingsRepository(private val settings: Settings) {
         private const val KEY_TTS_MODEL = "tts_model"
         private const val KEY_STT_MODEL = "stt_model"
         private const val KEY_AUTO_SPEAK = "auto_speak"
+        private const val KEY_LISTENER_INTERVAL = "listener_interval_minutes"
+        private const val KEY_ASSISTANT_WAKE_WORD = "assistant_wake_word"
+        private const val KEY_KWS_THRESHOLD = "kws_threshold"
+        private const val KEY_KWS_SCORE = "kws_score"
+        private const val KEY_KWS_TRAILING_BLANKS = "kws_trailing_blanks"
     }
 }

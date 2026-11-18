@@ -74,6 +74,7 @@ shizuku-provider = { module = "dev.rikka.shizuku:provider", version.ref = "shizu
 # Markdown
 markdown-renderer-m3 = { module = "com.mikepenz:multiplatform-markdown-renderer-m3", version.ref = "markdown-renderer" }
 
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }

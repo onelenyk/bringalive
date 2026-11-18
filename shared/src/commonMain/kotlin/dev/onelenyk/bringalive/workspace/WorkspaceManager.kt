@@ -13,6 +13,7 @@ class WorkspaceManager(private val basePath: String) {
     fun init() {
         ensureDir(basePath)
         ensureDir("$basePath/memory")
+        ensureDir("$basePath/transcripts")
         if (!exists("SOUL.md")) initDefaults()
     }
 

@@ -17,6 +17,10 @@ import dev.onelenyk.bringalive.tools.createShellUiTools
 import dev.onelenyk.bringalive.tools.createSystemTools
 import dev.onelenyk.bringalive.tools.createVoiceTools
 import dev.onelenyk.bringalive.presentation.ToolsViewModel
+import dev.onelenyk.bringalive.assistant.AndroidAssistantEngine
+import dev.onelenyk.bringalive.assistant.AssistantEngine
+import dev.onelenyk.bringalive.listener.AndroidPassiveListenerEngine
+import dev.onelenyk.bringalive.listener.PassiveListenerEngine
 import dev.onelenyk.bringalive.voice.AndroidVoiceEngine
 import dev.onelenyk.bringalive.voice.VoiceEngine
 import io.ktor.client.HttpClient
@@ -56,6 +60,22 @@ class BringaliveApplication : Application() {
                     viewModel { ToolsViewModel(get(), get()) }
                     single<VoiceEngine> {
                         AndroidVoiceEngine(
+                            context = this@BringaliveApplication,
+                            settings = get(),
+                            logStore = get(),
+                            httpClient = get(),
+                        )
+                    }
+                    single<PassiveListenerEngine> {
+                        AndroidPassiveListenerEngine(
+                            context = this@BringaliveApplication,
+                            settings = get(),
+                            transcriptRepository = get(),
+                            httpClient = get(),
+                        )
+                    }
+                    single<AssistantEngine> {
+                        AndroidAssistantEngine(
                             context = this@BringaliveApplication,
                             settings = get(),
                             logStore = get(),
