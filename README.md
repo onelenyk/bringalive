@@ -94,7 +94,8 @@ install Shizuku and authorise → talk.
 
 ## Status
 
-Personal project, not a product. Android-first; iOS is a UI scaffold. Everything runs on
+Personal project, not a product, and not actively maintained — left public as a working
+example. Android-first; iOS is a UI scaffold. Everything runs on
 the phone except the LLM and STT/TTS calls.
 
 Known limits: no always-on wake word yet, tool schemas are hand-written, and a long agent
